@@ -1,196 +1,124 @@
-# Devil Extractor v2 — Architecture Plan
+# Implementation Plan: Devil Extractor v2 — Filter Plugin System
 
-> Purpose: `searchngx | devil-v2 | chat_agent` — a pipe-stage in a RAG pipeline.
-> Constraint: must be blazing-fast, zero-external-dependencies beyond lexbor, and output LLM-friendly text.
-> Version: v2 — fork of devil-extractor, will diverge with new features/improvements.
+## Overview
 
-## File Layout
+Restructure devil.c's monolithic walk logic into a compile-time composable
+filter system. Filters are static inline functions compiled into devil.c.
+No function pointers, no runtime indirection. Default build = byte-identical.
+
+## Architecture
 
 ```
-devil-extractor/
-├── CMakeLists.txt      # build script (libdevil + devil-cli)
-├── include/
-│   └── devil.h         # public API header
-├── src/
-│   ├── devil.c         # core: parser wrapper, DFS walk, noise filter, text assembly
-│   └── main.c          # CLI: stdin or file args → stdout
+devil.c (walk function has 3 extension points):
+
+  _devil_pre_filter(node, tag, ctx)   ← pre-filter hooks (skip decisions)
+  _devil_text_transform(node, text)   ← text hooks (transform content)
+  _devil_post_filter(node, tag, ctx)  ← post-filter hooks (emit content)
+
+filters/
+  noise.c      ← extracted noise filter (always-on, sets ctx->skip)
+  ad-block.c   ← CSS class check (sets ctx->skip)
+  table-aware.c ← table-aware text/post hooks
 ```
 
-## 1. Public API (`devil.h`)
-
-### `devil_parse(html, len)` → `devil_doc_t*`
-- Wraps lexbor's `lxb_html_parser_create` → `lxb_html_parser_init` → `lxb_html_parse`
-- Stores the parsed `lxb_html_document_t*`, the arena (`lexbor_mraw_t*`), and the parser in a `devil_doc_t` struct
-- Returns NULL on parse failure
-
-### `devil_text(doc)` → `char*`
-- Walks the DOM tree
-- Extracts text content, injecting newlines at block-level boundaries
-- Returns a malloc'd string (caller frees with `devil_free_string()`)
-
-### `devil_strip(doc)` → `char*`
-- Same as `devil_text` but skips noise tags entirely during walk
-- Noise tags: script, style, nav, aside, footer, header, noscript, iframe, form, select, head, meta, link
-
-### `devil_free_string(str)` → `void`
-- Frees a string returned by `devil_text` or `devil_strip`
-
-### `devil_free(doc)` → `void`
-- Destroys the parser, document, and arena in the correct order
-- Must be called after every `devil_parse` call
-
-## 2. Core Engine (`devil.c`)
-
-### Data Structure
+Each filter file:
 ```c
-typedef struct {
-    lexbor_html_document_t *doc;   // parsed DOM
-    lexbor_mraw_t          *mraw;  // memory arena (v3.x requirement: init before use)
-    lexbor_html_parser_t   *parser; // parser instance
-} devil_doc_t;
+#ifdef DEVIL_FILTER_NOISE
+static inline void _devil_pre_filter(lxb_dom_node_t *node, lxb_tag_id_t tag, walk_ctx_t *ctx) {
+    if (is_noise(tag)) {
+        ctx->skip = true;
+    }
+}
+#endif
 ```
 
-### Noise Tag Set
-- Array-based linear search (small set, fast enough)
-- Uses `LXB_TAG_*` constants from `<lexbor/tag/tag.h>`
-- Noise tags: SCRIPT, STYLE, NAV, ASIDE, FOOTER, HEADER, NOSCRIPT, IFRAME, FORM, SELECT, HEAD, META, LINK
+No function pointer dispatch — the compiler sees inline code.
 
-### Block-Level Tag Set
-- Tags that require a newline AFTER their content: DIV, P, H1-H6, LI, ARTICLE, BR, SECTION, UL, OL, DL, DD, DT, HR, BLOCKQUOTE, PRE, FIGURE, FIGCAPTION, CAPTION, TR, THEAD, TBODY, TFOOT, ABBR, ADDRESS, MAIN, SUMMARY, DETAILS
-- These tags signal a "paragraph boundary" to prevent tokenizer poisoning
+## Task List
 
-### DFS Walk Algorithm
-```
-extract(node, output_str):
-    if node is noise tag:
-        return 0  // skip entire subtree
+### Phase 1: Foundation (1-2 days)
 
-    if node is text node:
-        trim trailing whitespace from output
-        append text_content to output
-        set needs_newline = false
-        return 0
+**Task 1: Create devil-filters.h — inline filter hook macros**
+- `walk_ctx_t` gains a `skip` flag (bool)
+- `_devil_pre_filter()`, `_devil_text_transform()`, `_devil_post_filter()` declared as static inline no-ops
+- `#ifdef DEVIL_FILTER_*` guards
+- devil.c includes devil-filters.h and calls extension points
 
-    // element node, not noise
-    for each child of node:
-        extract(child, output)
+**Acceptance:** Compiles with zero warnings, produces identical binary to current devil.c
 
-    // after processing children, check if we need a block boundary
-    if node is block-level tag AND output is not empty:
-        append '\n' to output
-```
+**Files:** devil-filters.h, devil.c (add 3 extension point calls)
 
-### Text Trimming Strategy
-- Between block boundaries: strip leading/trailing whitespace, collapse multiple spaces to single space
-- Between inline elements within a block: preserve single space separator
-- Between block-level elements: always inject exactly one newline
-- This prevents "Hello World" becoming "HelloWorld" or "Hello   World"
+---
 
-### Memory Management (v3.x)
-Critical: lexbor v3.x requires `lexbor_mraw_init(mraw, chunk_size)` after `lexbor_mraw_create()`, otherwise segfault on any string/parser operation.
-```
-devil_parse(html, len):
-    mraw = lexbor_mraw_create()
-    lexbor_mraw_init(mraw, 4096)           // mandatory for v3.x
-    parser = lexbor_html_parser_create()
-    lexbor_html_parser_init(parser)
-    lexbor_html_parser_dom_opt_set(parser, DOM_OPT_DEFAULTS)
-    doc = lexbor_html_parse(parser, html, len)
-    if doc == NULL:
-        lexbor_html_parser_destroy(parser)
-        lexbor_mraw_destroy(mraw, true)
-        return NULL
-    result = malloc devil_doc_t
-    result->doc = doc
-    result->mraw = mraw
-    result->parser = parser
-    return result
+**Task 2: Extract noise filter into filters/noise.c**
+- Move `is_noise()` and noise-checking from devil.c into filters/noise.c
+- noise.c provides `_devil_pre_filter()` that sets `ctx->skip = true`
+- Remove noise logic from devil.c walk function
+- Verify byte-identical output
 
-devil_free(doc):
-    lexbor_html_parser_destroy(doc->parser)
-    lexbor_html_document_destroy(doc->doc)
-    lexbor_mraw_destroy(doc->mraw, true)
-    free(doc)
-```
+**Acceptance:** All 10 test sites produce identical output
 
-## 3. CLI (`main.c`)
+**Files:** devil.c (remove noise logic, add noise.c to CMake), filters/noise.c
 
-### Input Modes
-1. **stdin** (default): `cat page.html | devil` — reads until EOF
-2. **File arguments**: `devil file1.html file2.html` — processes each file, outputs with `---` separator between files
+---
 
-### File Reading (Safe)
-```
-read_file(path):
-    f = fopen(path, "rb")
-    if f == NULL: print error, continue to next file
-    fseek(f, 0, SEEK_END)
-    size = ftell(f)
-    fseek(f, 0, SEEK_SET)
-    buf = malloc(size + 1)
-    n = fread(buf, 1, size, f)
-    fclose(f)  // close immediately
-    buf[n] = 0
-    return buf
-```
+### Phase 2: New Filters (2-3 days)
 
-### Pipeline Flow
-```
-for each input source:
-    read all bytes into buffer
-    doc = devil_parse(buffer, len)
-    if doc == NULL: print "parse error" to stderr, continue
-    text = devil_strip(doc)
-    printf("%s", text)
-    devil_free_string(text)
-    devil_free(doc)
-    free(buffer)
-```
+**Task 3: Implement CSS class-based ad-block filter (filters/ad-block.c)**
+- Recognizes: .ad-banner, .ad-container, .cookie-banner, .popup, .modal, .sidebar, .widget, .advertisement
+- Checks element class attributes during DOM walk
+- Sets `ctx->skip = true` for matching elements
+- Class list is static const (no allocation)
 
-### Error Handling
-- Parse errors: print to stderr, continue processing remaining input (don't crash)
-- Memory allocation failure: print to stderr, free any partial state, return 1
-- Missing stdin input: print usage to stderr, return 1
-- File read errors: print filename + error to stderr, continue to next file
+**Acceptance:** Ad elements are fully stripped, sibling content preserved
 
-## 4. Build System (`CMakeLists.txt`)
+**Files:** filters/ad-block.c
 
-```cmake
-cmake_minimum_required(VERSION 3.16)
-project(devil C)
+---
 
-# Find lexbor
-find_library(LEXBOR_LIBRARY lexbor PATHS /usr/local/lib)
-find_path(LEXBOR_INCLUDE_DIR lexbor/html/parser.h
-    /usr/local/include /usr/include)
+**Task 4: Implement table-aware filter (filters/table-aware.c)**
+- Detects `<table>`, `<tr>`, `<td>`, `<th>` elements
+- Adds `|` prefix on first cell, `| ` between cells, `|` at row end
+- Pipe-separated table format (Markdown-style)
+- Uses a small table state in walk_ctx_t
 
-# Library
-add_library(devil STATIC src/devil.c)
-target_include_directories(devil PRIVATE include ${LEXBOR_INCLUDE_DIR})
-target_link_libraries(devil ${LEXBOR_LIBRARY})
+**Acceptance:** Tables output as pipe-separated text, non-table content unchanged
 
-# CLI binary
-add_executable(devil-cli src/main.c)
-target_link_libraries(devil-cli devil)
+**Files:** filters/table-aware.c
 
-# Install
-install(TARGETS devil devil-cli DESTINATION bin)
-```
+---
 
-## 5. Error Cases to Handle
+### Phase 3: Integration (0.5 days)
 
-1. **Empty input** — output empty string, no crash
-2. **Malformed HTML** — lexbor is forgiving, will still produce a partial DOM; extract what's possible
-3. **Very large HTML** — stdin reads in chunks if needed; for now, read entire buffer (suitable for typical RAG pipeline chunks)
-4. **Nested noise tags** — `<div><script><style>...</div>` — the noise filter is recursive, so even deeply nested noise tags are skipped
+**Task 5: Update CMakeLists.txt**
+- Add `option(DEVIL_FILTERS "Build extra filters" ON)`
+- When ON: add filters/*.c to compilation, pass `-DDEVIL_FILTER_*` defines
+- When OFF: only noise filter (byte-identical to current)
 
-## 6. Verification Checklist
+**Acceptance:** `cmake -DDEVIL_FILTERS=OFF` builds identical binary
 
-- [ ] Compiles with `gcc -Wall -Wextra -pedantic` with zero warnings
-- [ ] Pipes HTML from stdin correctly
-- [ ] Handles multiple files with separators
-- [ ] Noise tags fully removed (no script/style content leaks)
-- [ ] Block boundaries produce newlines (no concatenated text)
-- [ ] Memory: `valgrind --leak-check=full` reports zero leaks
-- [ ] `devil_free` called exactly once per `devil_parse`
-- [ ] `lexbor_mraw_destroy` called with `true` to free arena allocator
+**Files:** CMakeLists.txt
+
+---
+
+**Task 6: Verification**
+- Run all 10 test sites: compare with baseline (DEVIL_FILTERS=OFF vs ON)
+- Run valgrind: zero leaks
+- Compile with `-Wall -Wextra -pedantic`: zero warnings
+
+**Acceptance:** All checks pass
+
+**Files:** devil-filters.h (docs)
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Filter hooks add overhead to walk_node | High | Use `static inline` — compiler inlines everything |
+| Multiple filters conflict | Medium | Pre-filters run first (noise always first), then text, then post |
+| Table filter breaks on complex nested tables | Low | Start with flat tables, add nesting later |
+
+## Open Questions
+
+1. Should the default include noise filter, or make noise also optional?
+   → Noise is always-on (it's the baseline behavior). Extra filters are opt-in.
