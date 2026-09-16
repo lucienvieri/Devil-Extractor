@@ -1,1 +1,7 @@
 build/
+build-*
+*.bak
+*.old_backup
+*.o
+test.html
+test-sites/.hermes-tmp.*
