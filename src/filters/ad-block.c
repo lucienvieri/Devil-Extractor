@@ -150,12 +150,8 @@ class_token_is_noise(const char *token, size_t len)
 
 /* Check data-* attributes for ad/analytics/privacy markers. */
 static bool
-data_attr_is_noise(const char *name, size_t name_len,
-                   const char *value, size_t value_len)
+data_attr_is_noise(const char *name, size_t name_len)
 {
-    (void)value;
-    (void)value_len;
-
     static const char *data_pats[] = {
         "data-ad-",
         "data-analytics",
@@ -214,25 +210,9 @@ adblock_should_prune(lxb_dom_node_t *node, lxb_tag_id_t tag, void *ctx_ptr)
     while (attr) {
         size_t name_len = 0;
         const lxb_char_t *name_data = lxb_dom_attr_qualified_name(attr, &name_len);
-        if (name_data && name_len > 5) {
-            bool is_data_attr = false;
-            if (name_len >= 5) {
-                const lxb_char_t *prefix = (const lxb_char_t *)"data-";
-                size_t plen = 5;
-                if (name_len >= plen) {
-                    is_data_attr = true;
-                    for (size_t i = 0; i < plen; i++) {
-                        if (((const lxb_char_t *)prefix)[i] != name_data[i]) {
-                            is_data_attr = false;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (is_data_attr) {
-                if (data_attr_is_noise((const char *)name_data, name_len, NULL, 0))
-                    return true;
-            }
+        if (name_data && name_len > 5 && _ci_starts_with((const char *)name_data, "data-")) {
+            if (data_attr_is_noise((const char *)name_data, name_len))
+                return true;
         }
         attr = lxb_dom_element_next_attribute(attr);
     }
@@ -240,11 +220,11 @@ adblock_should_prune(lxb_dom_node_t *node, lxb_tag_id_t tag, void *ctx_ptr)
     return false;
 }
 
-/* Registration — called from extract_text() when DEVIL_FILTER_AD_BLOCK is defined. */
+// Registration — called from extract_text() when DEVIL_FILTER_AD_BLOCK is defined.
 void
 adblock_register(walk_ctx_t *ctx)
 {
-    ctx->pre_filter = adblock_should_prune;
+    devil_pre_filter_register(ctx, adblock_should_prune);
 }
 
 #endif /* ADBLOCK_FILTER_DEFINED */

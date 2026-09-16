@@ -41,3 +41,9 @@ On each element node, the tag ID is checked against the noise table
 2. Return true to indicate pruning
 
 If the tag is not noise, return false and the walker continues normally.
+
+## Interaction with other filters
+
+When `--js` is also enabled, the JS filter runs on `<script>`/`<style>` before
+the noise filter prunes them. This ensures script content is captured even when
+noise pruning is active.

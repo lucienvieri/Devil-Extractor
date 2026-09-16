@@ -11,8 +11,14 @@ enabled.
 devil-filters.h   — declares walk_ctx_t extensions + default NULL
 filters/noise.c   — implements _devil_pre_filter (noise tag drop)
 filters/ad-block.c — implements _devil_pre_filter (CSS class drop)
+filters/js-filter.c — implements _devil_pre_filter (script/style text extract)
 devil.c           — calls hooks at extension points
 ```
+
+See also:
+- [Noise Filter](noise-filter.md)
+- [Ad-Block Filter](ad-block-filter.md)
+- [JS Filter](js-filter.md)
 
 ## Compile-time toggles
 
@@ -20,6 +26,7 @@ Defined in CMakeLists.txt:
 
 - `DEVIL_FILTER_NOISE` — load noise tag filter
 - `DEVIL_FILTER_AD_BLOCK` — load CSS-class ad-block filter
+- `DEVIL_FILTER_JS` — load script/style text extraction filter
 
 ## Memory model
 

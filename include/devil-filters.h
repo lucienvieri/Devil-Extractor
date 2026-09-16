@@ -8,6 +8,7 @@
 #define DEVIL_FILTERS_H
 
 #include <stdbool.h>
+#include <stdlib.h>
 #include <lexbor/dom/interfaces/node.h>
 #include <lexbor/tag/tag.h>
 
@@ -25,19 +26,65 @@ typedef void (*devil_post_filter_fn)(lxb_dom_node_t *node,
                                       lxb_tag_id_t tag,
                                       void *ctx);
 
+/* Filter node — chains pre-filters into a singly-linked list.
+ * Each filter's register() prepends to ctx->filter_head. */
+typedef struct filter_node {
+    struct filter_node *next;
+    devil_pre_filter_fn fn;
+} filter_node_t;
+
 /* walk_ctx_t extended with filter hooks (NULL = no-op).
  * Base fields match devil.c's layout for ABI compatibility. */
 typedef struct devil_walk_ctx {
-    void     *out;        /* lexbor_str_t* */
-    void     *mraw;       /* lexbor_mraw_t* */
-    bool      has_output; /* true if we've emitted text */
-    bool      in_block;   /* true if last node was block */
-    bool      skip;       /* set by pre-filters to prune subtree */
+    void     *out;          /* lexbor_str_t* */
+    void     *mraw;         /* lexbor_mraw_t* */
+    bool      has_output;   /* true if we've emitted text */
+    bool      in_block;     /* true if last node was block */
+    bool      skip;         /* set by pre-filters to prune subtree */
 
     devil_pre_filter_fn  pre_filter;
     devil_text_transform_fn text_transform;
     devil_post_filter_fn post_filter;
+
+    /* Filter chaining list (prepended by each register call). */
+    filter_node_t       *filter_head;
 } walk_ctx_t;
+
+/* Register a pre-filter at the head of the chain. */
+static inline void
+devil_pre_filter_register(walk_ctx_t *ctx, devil_pre_filter_fn fn)
+{
+    /* Caller must have malloc'd a filter_node_t — we free it in devil.c */
+    filter_node_t *node = malloc(sizeof(filter_node_t));
+    if (!node) return;
+    node->fn   = fn;
+    node->next = ctx->filter_head;
+    ctx->filter_head = node;
+}
+
+/* Call all registered pre-filters; returns true if any pruned the subtree. */
+static inline bool
+devil_pre_filter_call(walk_ctx_t *ctx, lxb_dom_node_t *node, lxb_tag_id_t tag)
+{
+    filter_node_t *n;
+    for (n = ctx->filter_head; n; n = n->next) {
+        if (n->fn(node, tag, ctx))
+            return true;
+    }
+    return false;
+}
+
+/* Free the entire filter chain. */
+static inline void
+devil_pre_filter_free(walk_ctx_t *ctx)
+{
+    filter_node_t *n, *next;
+    for (n = ctx->filter_head; n; n = next) {
+        next = n->next;
+        free(n);
+    }
+    ctx->filter_head = NULL;
+}
 
 /* Noise tags — shared table used by devil.c and filter plugins. */
 #define DEVIL_NOISE_TAGS \
