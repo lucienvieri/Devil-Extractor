@@ -2,6 +2,8 @@
 
 The goal is to be the fastest web extractor in existence, best used along side, searchxng header-only C library for extracting readable text from HTML (v2.3). Strips noise (scripts, styles, ads), block tags, and optional filter plugins — powered by the [Lexbor](https://github.com/lexbor/Lexbor) HTML5 parser.
 
+future plans are to integrate Lexbor code into the project   
+
 ## Features
 
 - **Noise removal** — strips script, style, nav, aside, footer, iframe and 20+ noise tags
