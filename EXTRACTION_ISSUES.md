@@ -1,4 +1,4 @@
-# Devil-Extractor v2.3 — Extraction Issues Log
+# Devil-Extractor v2.4 — Extraction Issues Log
 
 *Compiled 2026-08-12 during venue search round 3*
 
@@ -35,7 +35,7 @@ These URLs failed during the curl fetch step (0 bytes received), so devil-extrac
 
 ## Notes for Future Rounds
 
-- Devil-extractor v2.3 handles static HTML well but struggles with SPAs
+- Devil-extractor v2.4 handles static HTML well but struggles with SPAs
 - Sites returning 14 bytes of text are the ones that need headless browser extraction or `devil-v2-cli` flags for JS rendering
 - Consider adding a retry or flag check for known SPA sites
 - The `-j -a` flags were used during extraction

@@ -1,6 +1,6 @@
 # Devil Extractor
 
-A fast, header-only C library for extracting readable text from HTML (v2.3). Strips noise (scripts, styles, ads), block tags, and optional filter plugins — powered by the [Lexbor](https://github.com/lexbor/Lexbor) HTML5 parser.
+A fast, header-only C library for extracting readable text from HTML (v2.4). Strips noise (scripts, styles, ads), block tags, and optional filter plugins — powered by the [Lexbor](https://github.com/lexbor/Lexbor) HTML5 parser.
 
 ## Features
 
