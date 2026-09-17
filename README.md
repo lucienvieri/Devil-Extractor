@@ -1,4 +1,4 @@
-# Devil Extractor
+# Devil Extractor 2.4
 
 The goal is to be the fastest web extractor in existence, best used along side, searchxng header-only C library for extracting readable text from HTML (v2.3). Strips noise (scripts, styles, ads), block tags, and optional filter plugins — powered by the [Lexbor](https://github.com/lexbor/Lexbor) HTML5 parser.
 
